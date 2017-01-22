@@ -1,0 +1,13 @@
+bookdown::gitbook:
+  css: css/vanco.css
+  config:
+    toc:
+      collapse: none
+      scroll_highlight: yes
+      before: |
+        <li><a href="./">Vancomycin in Critically-ill pediatric patients</a></li>
+      after: |
+        <li><a href="https://vjd.github.io/vteu_vanco/" target="blank">Confidential</a></li>
+    sharing: no
+bookdown::html_chapters:
+  css: [css/vanco.css, css/toc.css]
