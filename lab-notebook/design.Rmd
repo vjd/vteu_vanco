@@ -1,7 +1,4 @@
----
-title: "Untitled"
-output: html_document
----
+# Design
 
 ```{r}
 library(tidyverse)
@@ -11,8 +8,9 @@ library(satchel)
 
 
 ```{r}
-satchel <- Satchel$new("sim_template", "../data/derived/satchel")
+satchel <- Satchel$new("design", "../data/derived/satchel")
 ```
+
 
 ```{r}
 models <- source("../modeling/models.R")$value
@@ -21,18 +19,27 @@ models$available()
 ```
 
 ```{r}
-mod <- models$use("ex1")
+mod <- models$use("capparelli")
+#mod <- models$use("stockmann")
 ```
 
 ```{r}
-data <- expand.ev(ID=1:10, amt=1000, cmt=2, rate=50, ii=48, addl=4)
+reg1 <-data_frame(ID=1, rate= -2, cmt=1, time=0, evid=1, regimen=1,
+                      dose=c(15),
+                      amt=c(15)*15,
+                      #SCR = c(0.2,0.4,0.8,1.0,1.2,1.8,2.0,2.4,2.8),
+                      ii=c(6), 
+                      addl=c(6))
+reg2 <- reg1 %>% mutate(ID=2,ii=8)
+dose_df <- bind_rows(reg1,reg2)
+# View(dose_df)
 ```
 
 ```{r}
 mod %>% 
-  data_set(data) %>% 
-  Req(CP) %>%
-  mrgsim(end=480) %>% 
-  plot
+  data_set(dose_df) %>% param(BW=15) %>% 
+  carry.out(dose,amt,ii,addl,regimen,SCR) %>%
+  Req(CP) %>% 
+  mrgsim(delta=0.1, end=120) %>% plot
 ```
 
