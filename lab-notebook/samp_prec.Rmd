@@ -1,0 +1,90 @@
+# Sample size and precision
+
+```{r}
+library(metrumrg)
+library(tidyverse)
+library(forcats)
+library(mrgsolve)
+library(satchel)
+library(PKPDmisc)
+
+```
+
+```{r}
+satchel <- Satchel$new("samp_prec", "../data/derived/satchel")
+```
+
+```{r}
+df <- satchel$use("all_sims","tch_vanc")
+
+df <- df %>% distinct(NID, .keep_all=TRUE) %>% 
+  dplyr::select(ID=NID,AGE,BW,SCR,GFR,RF) %>% 
+  mutate(RF = fct_relevel(RF,">=90","60-90","30-60","15-30","<15")) %>% 
+  rename(AGEYR = AGE) %>% 
+  mutate(AGE = AGEYR*365.24)
+```
+
+```{r}
+df %>% 
+  group_by(RF) %>% 
+  summarise(n=n(),
+            prop=round(100*(n/1449),2))
+```
+
+
+```{r}
+dfsizes <- map_df(c(200,400,600,800,1000),.f = function(i){
+  sampdf <- sample_n(df,i,replace = T) %>% 
+    mutate(nsamp = i) %>% 
+    group_by(nsamp) %>% 
+    rename(OID = ID) %>% 
+    mutate(GID = 1:nrow(.)) %>% 
+    ungroup
+}) %>% mutate(ID=1:nrow(.))
+```
+
+
+```{r}
+unique(dfsizes$nsamp) %>% map_df(.f=function(i) {
+  dfsizes %>% 
+    filter(nsamp==i) %>% 
+    group_by(RF) %>% 
+    summarise(n=n(),
+              prop=round(100*(n/nrow(.)),2))
+})
+```
+
+```{r}
+q6 <- dfsizes %>% mutate(EVID=1,AMT=15*BW, TIME=0, CMT=1,ADDL=7,II=6)
+q8 <- dfsizes %>% mutate(EVID=1,AMT=15*BW, TIME=0, CMT=1,ADDL=5,II=8)
+```
+
+
+```{r}
+models <- source("../modeling/models.R")$value
+
+models$available()
+```
+
+```{r}
+mod <- models$use("capparelli")
+ind <- models$use("cap_ind")
+#mod <- models$use("stockmann")
+```
+
+
+
+```{r}
+cli_vi <- mod %>% data_set(q6) %>% carry.out(GFR,AGEYR,nsamp,OID,GID,EVID,AMT,ADDL,II,CMT) %>% 
+  mrgsim(end = 48,delta=6,add=c(0.5,6.5,12.5,18.5,24.5,30.5,36.5,42.5), recsort=2,tad=TRUE,digits=4) %>% 
+  as_data_frame %>% filter(!(TIME==0&CP==0))
+write.csv(cli_vi,"../data/derived/q6dosing.csv", row.names = FALSE)
+```
+
+
+```{r}
+cli_vi <- mod %>% data_set(q8) %>% carry.out(GFR,AGEYR,nsamp,OID,GID,EVID,AMT,ADDL,II,CMT) %>% 
+  mrgsim(end = 48,delta=8,add=c(0.5,8.5,16.5,24.5,32.5,40.5), recsort=2,tad=TRUE,digits=4) %>% 
+  as_data_frame %>% filter(!(TIME==0&CP==0))
+write.csv(cli_vi,"../data/derived/q8dosing.csv", row.names = FALSE)
+```

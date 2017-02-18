@@ -1,0 +1,15 @@
+*.csv
+*.dir[0-9]/
+modelfit_dir[0-9]/
+*.ext
+*.cov
+*.cor
+*.phi
+*.coi
+sdtab*
+patab*
+catab*
+cotab*
+vpc*/
+bs*/
+

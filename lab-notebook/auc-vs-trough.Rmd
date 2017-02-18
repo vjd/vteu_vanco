@@ -1,0 +1,231 @@
+# Trough vs AUC Comparison
+
+```{r}
+library(readr)
+library(dplyr)
+library(vancomycin)
+library(PKPDmisc)
+library(knitr)
+library(mrgsolve)
+library(ggplot2)
+library(purrr)
+```
+
+```{r}
+## provides list MODELS containing models
+source("../modeling/models.R")
+```
+## Data
+
+```{r}
+demog <- read_csv("../data/derived/vanc_ped_demogs.csv") %>% 
+  rename(SCR=CRE, BW=WT) %>% mutate(AGEyr = AGE,AGE = AGEyr*52*7)
+```
+
+
+```{r}
+satchel <- Satchel$new("auc-trough", "../data/derived/satchel")
+```
+
+
+```{r}
+models <- source("../modeling/models.R")$value
+
+models$available()
+```
+## Objectives
+
+* Create demographic distribution
+
+```{r}
+possible_regimens <- expand.grid(
+  amtperkg = seq(5, 25, 5), 
+  ii = c(6, 8, 12)) %>% 
+  arrange(amtperkg) 
+```
+
+* generate CL/V for individual, optimize to establish what dose to give to target a trough of 15
+
+```{r}
+cli_vi <- mod %>% data_set(
+  demog %>% mutate(time = 0, cmt = 1)
+) %>% mrgsim(end = 0) %>% select(-CENT) %>%
+  mutate(ss=1,cmt = 1)
+
+ex_id <- cli_vi %>% slice(1)
+
+full_id <- full_join(ex_id, possible_regimens %>% mutate(ID = ex_id$ID)) %>%
+  mutate(amt = amtperkg*BW,
+         rate = amt,
+         evid = 1,
+         OID = ID,
+         ID = 1:nrow(.),
+         V = Vc)
+
+
+ind_results <- ind %>%
+  data_set(full_id) %>% carry.out(amtperkg) %>% 
+     mrgsim(end=24,delta=0.1,digits=4) %>% as.data.frame %>%
+  full_join(full_id %>% select(ID, amt, ii))
+
+ind_troughs <- ind_results %>% filter(time == 0, DV > 0) 
+   
+# closest to 14 for each II
+dosing_recommendations <- ind_troughs %>% 
+  mutate(diff = abs(DV - 15)) %>%
+  group_by(ii) %>% 
+  filter(diff == min(diff)) 
+
+dosing_recommendations
+```
+
+```{r}
+full_ind_results <- ind_results %>% 
+  filter(ID %in% dosing_recommendations$ID) %>%  
+  filter(!(time == 0 & DV == 0)) %>%
+  group_by(ID, amt, ii) %>% 
+  summarize(AUC24 = PKPDmisc:::auc_partial_cpp(time, DV, c(0, 24)))
+
+full_ind_results
+```
+
+
+* distribution of patients above 400 AUC/MIC
+
+
+## All individuals
+
+```{r }
+ind_auc_vs_trough <- function(ex_id, possible_regimens,ind) {
+  possible_regimens$ID <- ex_id$ID 
+  full_id <- suppressMessages(
+    full_join(ex_id, possible_regimens) %>%
+    mutate(amt = amtperkg*BW,
+         rate = amt,
+         evid = 1,
+         OID = ID,
+         ID = 1:nrow(.),
+         CL = CL,
+         V = Vc)
+  )
+
+  ind_results <- suppressMessages(
+    ind %>%
+    data_set(full_id) %>%
+       mrgsim(end=24,delta=0.1,digits=4) %>% as.data.frame %>%
+    full_join(full_id %>% select(ID, amt, ii))
+  )
+  ind_troughs <- ind_results %>% filter(time == 0, DV > 0) 
+     
+  # closest to 14 for each II
+  dosing_recommendations <- ind_troughs %>% 
+    mutate(diff = abs(DV - 15)) %>%
+    group_by(ii) %>% 
+    filter(diff == min(diff)) %>% ungroup
+  
+  full_ind_results <- ind_results %>% 
+    filter(ID %in% dosing_recommendations$ID) %>%  
+    filter(!(time == 0 & DV == 0)) %>%
+    group_by(ID, amt, ii) %>% 
+    summarize(AUC24 = PKPDmisc:::auc_partial_cpp(time, DV, c(0, 24)))
+  
+  output <- full_ind_results %>%
+    bind_cols(dosing_recommendations %>% 
+                select(DV)) %>% 
+    ungroup %>% rename(NID = ID)
+  return(output)
+}
+
+```
+
+```{r}
+all_inds <- cli_vi %>% 
+  by_row(function(row) {
+    ind_auc_vs_trough(row, possible_regimens, ind)
+  }, .collate="rows")  
+```
+
+```{r}
+auc_gt400 <- all_inds %>% 
+  mutate(
+    GT400AUC = ifelse(AUC24 > 400, 1, 0),
+    GT400AUCDC = ifelse(AUC24 > 400, "AUC/MIC > 400", "AUC/MIC < 400")) 
+
+```
+
+```{r}
+auc_gt400 %>%
+  group_by(ii) %>%
+  summarize(prop = mean(GT400AUC),
+            percent_gt400 = round(prop*100, 1))
+```
+
+
+```{r}
+DV_wt <- auc_gt400 %>%
+  ggplot(aes(x = BW, y = DV, color = factor(GT400AUCDC))) +
+  geom_point() +
+  theme_bw() +
+  base_theme() +
+  labs(x = "Weight, kg", y = "Trough Concentration, mg/L")
+```
+
+```{r}
+DV_wt + facet_wrap(~ii)
+```
+
+```{r}
+auc_gt400 %>% filter(AUC24>0) %>% 
+  ggplot(aes(x = DV, y = AUC24, color = factor(ii))) +
+  geom_point() +
+  theme_bw() +
+  base_theme() +
+  labs(x = "Trough Concentration, mg/L", y = "AUC mg*day/L") +
+  scale_color_discrete(name = "Dosing Interval, hours") +
+  theme(legend.position = c(1, 1), 
+        legend.justification = c(1, 1))
+```
+
+```{r}
+auc_gt400 %>%
+  mutate(daily_dose = amt*24/ii) %>%
+  ggplot(aes(x = daily_dose, y = AUC24, color = factor(ii) )) + 
+  geom_point() +
+  theme_bw() +
+  base_theme() +
+  labs(x = "Daily Dose (mg)", y = "AUC mg*day/L") +
+  scale_color_discrete(name = "Dosing Interval, hours") +
+  theme(legend.position = c(1, 1), 
+        legend.justification = c(1, 1))
+```
+
+```{r}
+auc_gt400 %>%
+  mutate(daily_dose = amt*24/ii) %>%
+  ggplot(aes(x = ID, y = AUC24, color = factor(ii) )) + 
+  geom_point() +
+  theme_bw() +
+  base_theme() +
+  labs(x = "ID", y = "AUC mg*day/L") +
+  scale_color_discrete(name = "Dosing Interval, hours") +
+  theme(legend.position = c(1, 1), 
+        legend.justification = c(1, 1))
+```
+
+```{r}
+auc_gt400 %>%
+  mutate(daily_dose = amt*24/ii) %>%
+  ggplot(aes(x = ID, y = daily_dose, color = factor(ii) )) + 
+  geom_point() +
+  theme_bw() +
+  base_theme() +
+  labs(x = "ID", y = "Daily Dose (mg)") +
+  scale_color_discrete(name = "Dosing Interval, hours") +
+  theme(legend.position = c(1, 1), 
+        legend.justification = c(1, 1))
+```
+
+```{r}
+devtools::session_info()
+```
+
